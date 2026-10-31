@@ -8,4 +8,5 @@
 /data/
 
 # Streamlit secrets (MongoDB credentials) - never commit
-.streamlit/secrets.toml.DS_Store
+.streamlit/secrets.toml
+.DS_Store
