@@ -7,7 +7,7 @@ The page is split into two columns (st.columns):
   - right: st.pills (any set of months)                 -> line chart of hourly flows
 An st.expander below the columns documents the data source.
 
-Data pipeline (see notebooks/api_extraction.ipynb):
+Data pipeline (see notebooks/project_2.ipynb):
 ENTSO-E API -> Spark -> Cassandra -> Spark (hourly aggregation) -> MongoDB -> this page.
 """
 import streamlit as st

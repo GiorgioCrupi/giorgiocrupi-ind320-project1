@@ -1,7 +1,7 @@
 .env
 
 # Local cache of the ENTSO-E API data (cross-border flows).
-# This folder is generated automatically by notebooks/api_extraction.ipynb:
+# This folder is generated automatically by notebooks/project_2.ipynb:
 # if the cache file is missing, the notebook downloads fresh data from the
 # ENTSO-E API and saves it here. The data is derived and reproducible,
 # so it is not tracked in the repository.
