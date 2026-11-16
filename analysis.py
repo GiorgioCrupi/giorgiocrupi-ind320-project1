@@ -327,7 +327,13 @@ def reservoir_series(reservoirs, area_type="EL", area_number=3):
     """Weekly filling rate of one area as a regular time series (no gaps)."""
     s = (reservoirs[(reservoirs.Area_Type == area_type) & (reservoirs.Area_Number == area_number)]
          .set_index("Date")["Fill_Rate"].sort_index())
-    s = s[~s.index.duplicated()]
+    s = s[~s.index.duplicated()].dropna()
+    # STL and the spectrogram need at least two full years (2 x 52 weeks) of data.
+    # Some areas have no reservoir statistics at all, so stop with a clear message
+    # instead of a cryptic error inside statsmodels.
+    if len(s) < 104:
+        raise ValueError(f"Not enough reservoir data for {area_type} {area_number} "
+                         f"({len(s)} weeks; at least 104 are needed).")
     return s.asfreq("W-MON").interpolate()   # fill any missing week by linear interpolation
 
 

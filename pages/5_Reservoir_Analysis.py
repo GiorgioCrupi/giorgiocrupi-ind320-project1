@@ -9,7 +9,7 @@ The analysis functions are shared with the notebook through analysis.py.
 """
 import streamlit as st
 
-from analysis import load_reservoirs, reservoir_spectrogram, stl_decomposition
+from analysis import load_reservoirs, reservoir_series, stl_decomposition, reservoir_spectrogram
 
 st.title("Reservoirs: Seasonal Analysis")
 
@@ -26,6 +26,13 @@ def get_reservoirs():
 
 
 reservoirs = get_reservoirs()
+
+# Some areas have no reservoir statistics: show a message instead of an error
+try:
+    reservoir_series(reservoirs, area_type, area_number)
+except ValueError as e:
+    st.warning(f"{e} Please choose another area in the sidebar.")
+    st.stop()
 
 tab_stl, tab_spec = st.tabs(["STL decomposition", "Spectrogram"])
 
