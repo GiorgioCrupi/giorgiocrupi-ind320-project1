@@ -10,3 +10,6 @@
 # Streamlit secrets (MongoDB credentials) - never commit
 .streamlit/secrets.toml
 .DS_Store
+
+# Python bytecode cache, created automatically when the code runs
+__pycache__/
