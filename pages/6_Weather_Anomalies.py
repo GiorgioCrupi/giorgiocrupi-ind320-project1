@@ -6,8 +6,12 @@ in the global sidebar selector, organised in tabs:
   - Outliers with Statistical Process Control on DCT high-pass filtered data (SPC)
   - Anomalies with the Local Outlier Factor (LOF)
 The weather data is downloaded automatically and cached, so no separate download page is needed.
-The analysis functions are shared with the notebook through analysis.py.
+The period comes from the global sidebar selection (at most the last 12 months of it, because
+the data is hourly). Temperature is the default weather property in both tabs.
+The analysis functions are shared through analysis.py and return interactive Plotly figures.
 """
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
@@ -22,10 +26,15 @@ st.title("Weather: Outliers and Anomalies")
 area_type, area_number = st.session_state.get("area", ("EL", 3))
 region_id = region_id_for(area_type, area_number)
 
-# The year is a local setting: it only matters for the weather analyses on this page
-year = st.selectbox("Year", list(range(2025, 1999, -1)), index=1)   # default 2024
-st.write(f"Hourly ERA5 weather data for **{region_id}**, **{year}** "
-         f"(average of {N_LOCATIONS} random locations; change the area in the sidebar).")
+# Period chosen in the sidebar. Hourly data for long periods is heavy to download (and limited
+# by the free Open-Meteo API), so at most the last 12 months of the period are used.
+period_start, period_end = st.session_state.get("period", (dt.date(2024, 1, 1), dt.date(2024, 12, 31)))
+end = min(period_end, dt.date.today() - dt.timedelta(days=7))   # ERA5 is published with a delay
+start = max(period_start, end - dt.timedelta(days=365))
+st.write(f"Hourly ERA5 weather data for **{region_id}**, **{start:%d %b %Y} – {end:%d %b %Y}** "
+         f"(average of {N_LOCATIONS} random locations; change the area and period in the sidebar).")
+if start > period_start:
+    st.caption("The selected period is longer than one year: only its last 12 months are used.")
 
 
 @st.cache_data
@@ -33,22 +42,23 @@ def get_locations():
     return load_locations()
 
 
-# Cached per (region, year): each combination is downloaded only once
+# Cached per (region, period): each combination is downloaded only once
 @st.cache_data(ttl=24 * 3600, show_spinner="Downloading weather data from Open-Meteo...")
-def get_weather(region_id, year):
-    return download_weather(region_id, f"{year}-01-01", f"{year}-12-31",
+def get_weather(region_id, start, end):
+    return download_weather(region_id, start.isoformat(), end.isoformat(),
                             locations=get_locations(), n_locations=N_LOCATIONS)
 
 
 try:
-    weather = get_weather(region_id, year)
+    weather = get_weather(region_id, start, end)
 except Exception as e:   # e.g. no network or the daily API limit reached
     st.error(f"The weather data could not be downloaded: {e}")
     st.stop()
 
+# Temperature first: it is the default weather property in both tabs
 VARIABLES = {
-    "precipitation": "Precipitation",
     "temperature_2m": "Temperature",
+    "precipitation": "Precipitation",
     "rain": "Rain",
     "snowfall": "Snowfall",
     "wind_speed_10m": "Wind speed",
@@ -61,8 +71,8 @@ with tab_spc:
     st.subheader("Outliers: Statistical Process Control")
     col1, col2, col3 = st.columns(3)
     with col1:
-        spc_var = st.selectbox("Variable", list(VARIABLES), format_func=VARIABLES.get,
-                               index=0, key="spc_var")   # default: precipitation
+        spc_var = st.selectbox("Weather property", list(VARIABLES), format_func=VARIABLES.get,
+                               index=0, key="spc_var")   # default: temperature
     with col2:
         cutoff_days = st.slider("DCT cut-off [days]", 7, 120, 30,
                                 help="Variations slower than this period are treated as seasonal.")
@@ -70,8 +80,8 @@ with tab_spc:
         n_std = st.slider("Number of robust standard deviations", 1.5, 6.0, 3.0, step=0.5)
 
     fig, summary, outliers = spc_outliers(weather, variable=spc_var, cutoff_days=cutoff_days,
-                                          n_std=n_std, region_label=f"({region_id}, {year})")
-    st.pyplot(fig)
+                                          n_std=n_std, region_label=f"({region_id})")
+    st.plotly_chart(fig, use_container_width=True)   # interactive: hover, zoom, toggle legend
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Outliers", summary["n_outliers"])
@@ -87,8 +97,8 @@ with tab_lof:
     st.subheader("Anomalies: Local Outlier Factor")
     col1, col2, col3 = st.columns(3)
     with col1:
-        lof_var = st.selectbox("Variable", list(VARIABLES), format_func=VARIABLES.get,
-                               index=1, key="lof_var")   # default: temperature
+        lof_var = st.selectbox("Weather property", list(VARIABLES), format_func=VARIABLES.get,
+                               index=0, key="lof_var")   # default: temperature
     with col2:
         contamination = st.slider("Proportion of anomalies [%]", 0.1, 5.0, 1.0, step=0.1) / 100
     with col3:
@@ -96,8 +106,8 @@ with tab_lof:
 
     fig, summary, anomalies = lof_anomalies(weather, variable=lof_var, contamination=contamination,
                                             n_neighbors=n_neighbors,
-                                            region_label=f"({region_id}, {year})")
-    st.pyplot(fig)
+                                            region_label=f"({region_id})")
+    st.plotly_chart(fig, use_container_width=True)
 
     m1, m2, m3 = st.columns(3)
     m1.metric("Anomalies", summary["n_anomalies"])
@@ -115,7 +125,8 @@ with st.expander("About the data and methods"):
 - **Locations:** {N_LOCATIONS} random locations inside the selected area (drawn from 1000 random
   locations per area, based on the NVE Atlas shapefiles); the plots show their hourly average.
   A small subset keeps the download fast and within the free API limits.
-- **Download:** automatic when an area or year is selected, and cached, so no separate
+- **Period:** taken from the sidebar (at most the last 12 months, because the data is hourly).
+- **Download:** automatic when an area or period is selected, and cached, so no separate
   download page is needed.
 - **SPC:** a DCT high-pass filter removes the seasonal level; limits are the seasonal level
   ± n robust standard deviations (median absolute deviation) of the remaining variations.

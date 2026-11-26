@@ -29,8 +29,8 @@ with col1:
              "cross-border flows and exchange rates.")
     # st.page_link creates a clickable link; the path must match st.Page in app.py
     st.page_link("pages/1_Map.py", label="Map", icon=":material/map:")
-    st.page_link("pages/2_Table.py", label="Reservoir table", icon=":material/table_chart:")
-    st.page_link("pages/3_Plot.py", label="Reservoir trends", icon=":material/show_chart:")
+    st.page_link("pages/2_Reservoir_Overview.py", label="Reservoir overview",
+                 icon=":material/water_drop:")
     st.page_link("pages/4_Cross_Border_Flows.py", label="Cross-border flows",
                  icon=":material/swap_horiz:")
     st.page_link("pages/7_Exchange_Rates.py", label="Exchange rates",

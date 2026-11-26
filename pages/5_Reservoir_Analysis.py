@@ -5,7 +5,7 @@ Two analyses of the weekly reservoir filling rate (NVE Magasinstatistikk API) fo
 chosen in the global sidebar selector, organised in tabs:
   - STL decomposition (trend, seasonal and residual components)
   - Spectrogram (frequency content over time)
-The analysis functions are shared with the notebook through analysis.py.
+The analysis functions are shared through analysis.py and return interactive Plotly figures.
 """
 import streamlit as st
 
@@ -25,7 +25,12 @@ def get_reservoirs():
     return load_reservoirs()
 
 
-reservoirs = get_reservoirs()
+# Error handling: a clear message instead of a crash if the NVE API cannot be reached
+try:
+    reservoirs = get_reservoirs()
+except Exception as e:
+    st.error(f"The reservoir statistics could not be downloaded from NVE: {e}")
+    st.stop()
 
 # Some areas have no reservoir statistics: show a message instead of an error
 try:
@@ -55,8 +60,10 @@ with tab_stl:
         robust = st.checkbox("Robust fitting", value=True,
                              help="Reduces the influence of outliers on the decomposition.")
 
-    st.pyplot(stl_decomposition(reservoirs, area_type, area_number,
-                                seasonal=seasonal, trend=trend, robust=robust))
+    # Interactive Plotly figure: hover for values, drag to zoom (the four panels zoom together)
+    st.plotly_chart(stl_decomposition(reservoirs, area_type, area_number,
+                                      seasonal=seasonal, trend=trend, robust=robust),
+                    use_container_width=True)
 
 # ---------- TAB 2: Spectrogram ----------
 with tab_spec:
@@ -75,8 +82,10 @@ with tab_spec:
             help="More overlap gives a smoother evolution over time.",
         )
 
-    st.pyplot(reservoir_spectrogram(reservoirs, area_type, area_number,
-                                    window_length=window_length, window_overlap=window_overlap))
+    st.plotly_chart(reservoir_spectrogram(reservoirs, area_type, area_number,
+                                          window_length=window_length,
+                                          window_overlap=window_overlap),
+                    use_container_width=True)
 
 # ---------- DATA SOURCE ----------
 with st.expander("About the data and methods"):

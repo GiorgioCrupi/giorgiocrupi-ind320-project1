@@ -55,8 +55,8 @@ home = st.Page("home.py", title="Home", icon=":material/home:", default=True)
 PAGES = {
     "Explore": [
         st.Page("pages/1_Map.py", title="Map", icon=":material/map:"),
-        st.Page("pages/2_Table.py", title="Reservoir table", icon=":material/table_chart:"),
-        st.Page("pages/3_Plot.py", title="Reservoir trends", icon=":material/show_chart:"),
+        st.Page("pages/2_Reservoir_Overview.py", title="Reservoir overview",
+                icon=":material/water_drop:"),
         st.Page("pages/4_Cross_Border_Flows.py", title="Cross-border flows",
                 icon=":material/swap_horiz:"),
         st.Page("pages/7_Exchange_Rates.py", title="Exchange rates",

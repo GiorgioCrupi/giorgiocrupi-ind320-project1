@@ -1,15 +1,18 @@
 """
-analysis.py - shared analysis functions for the IND320 project (part 3).
+analysis.py - shared analysis functions for the IND320 project (parts 3 and 4).
 
 The same functions are developed and tested in notebooks/project_3.ipynb.
 They are collected here so that the Streamlit pages can import them
 (`from analysis import ...`) instead of copying the code.
+Part 4: all figures are interactive Plotly figures (shown with st.plotly_chart),
+replacing the static matplotlib figures of part 3.
 
 Contents
 --------
 - Locations and regions : load_locations, region_id_for
 - Weather (Open-Meteo)  : make_openmeteo_client, download_weather
 - Outliers / anomalies  : spc_outliers (DCT + SPC), lof_anomalies (Local Outlier Factor)
+- Exchange rates (NB)   : download_exchange_rates, to_weekly
 - Reservoir statistics  : load_reservoirs, reservoir_series,
                           stl_decomposition, reservoir_spectrogram
 """
@@ -19,12 +22,11 @@ import tempfile
 import time
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")            # draw figures without a screen (needed on servers)
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import requests
+from plotly.subplots import make_subplots
 
 # ---------------------------------------------------------------------------
 # Locations and regions
@@ -160,6 +162,10 @@ def download_weather(region_id, start_date, end_date, locations, client=None,
     return regional
 
 
+UNITS = {"temperature_2m": "°C", "precipitation": "mm", "rain": "mm", "snowfall": "cm",
+         "wind_speed_10m": "km/h"}
+
+
 # ---------------------------------------------------------------------------
 # Outliers: Statistical Process Control on DCT high-pass filtered data
 # ---------------------------------------------------------------------------
@@ -207,22 +213,27 @@ def spc_outliers(weather, variable="precipitation", cutoff_days=30, n_std=3.0, r
         "type": np.where(x[is_outlier] > upper[is_outlier], "high", "low"),
     }, index=series.index[is_outlier])
 
-    # 4. Plot: data, SPC limit curves and outliers in a contrasting colour (SATV not plotted)
-    fig, ax = plt.subplots(figsize=(13, 5))
-    ax.plot(series.index, x, color="steelblue", linewidth=0.6, label=f"Hourly {variable}")
-    ax.plot(series.index, upper, color="orange", linewidth=1.2, linestyle="--", label="SPC limits")
-    ax.plot(series.index, lower, color="orange", linewidth=1.2, linestyle="--")
-    ax.scatter(outliers.index, outliers[variable], color="red", s=10, zorder=3,
-               label=f"Outliers ({is_outlier.sum()})")
-    unit = "mm" if variable in ("precipitation", "rain", "snowfall") else "°C"
-    ax.set_title(f"{variable.capitalize()} with SPC limits {region_label} "
-                 f"(cut-off {cutoff_days} days, ±{n_std} robust SD)")
-    ax.set_xlabel("Time")
-    ax.set_ylabel(f"{variable.capitalize()} [{unit}]")
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper right")
-    fig.tight_layout()
-    plt.close(fig)   # the caller decides when to show the figure
+    # 4. Interactive Plotly figure: data, SPC limit curves and outliers in a contrasting colour.
+    #    Scattergl draws the ~8760 hourly points with WebGL, which keeps the chart fast.
+    unit = UNITS.get(variable, "")
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(x=series.index, y=x, mode="lines", name=f"Hourly {variable}",
+                               line=dict(color="#60a5fa", width=1)))
+    fig.add_trace(go.Scattergl(x=series.index, y=upper, mode="lines", name="SPC limits",
+                               line=dict(color="#f59e0b", width=1.5, dash="dash")))
+    fig.add_trace(go.Scattergl(x=series.index, y=lower, mode="lines", name="SPC limits",
+                               line=dict(color="#f59e0b", width=1.5, dash="dash"),
+                               showlegend=False))
+    fig.add_trace(go.Scattergl(x=outliers.index, y=outliers[variable], mode="markers",
+                               name=f"Outliers ({int(is_outlier.sum())})",
+                               marker=dict(color="#dc2626", size=6)))
+    fig.update_layout(
+        title=f"{variable.capitalize()} with SPC limits {region_label} "
+              f"(cut-off {cutoff_days} days, ±{n_std} robust SD)",
+        xaxis_title="Time", yaxis_title=f"{variable.capitalize()} [{unit}]",
+        hovermode="x unified", legend=dict(orientation="h", y=1.02, x=1, xanchor="right",
+                                           yanchor="bottom"),
+    )
 
     summary = {
         "variable": variable,
@@ -274,20 +285,23 @@ def lof_anomalies(weather, variable="temperature_2m", contamination=0.01, n_neig
         "lof_score": scores[is_anomaly].round(3),
     })
 
-    # Plot: data with anomalies in a contrasting colour
-    unit = "mm" if variable in ("precipitation", "rain", "snowfall") else "°C"
-    fig, ax = plt.subplots(figsize=(13, 5))
-    ax.plot(series.index, series, color="steelblue", linewidth=0.6, label=f"Hourly {variable}")
-    ax.scatter(anomalies.index, anomalies[variable], color="red", s=12, zorder=3,
-               label=f"Anomalies ({is_anomaly.sum()})")
-    ax.set_title(f"{variable.capitalize()} with LOF anomalies {region_label} "
-                 f"(contamination {contamination:.1%}, {n_neighbors} neighbours)")
-    ax.set_xlabel("Time")
-    ax.set_ylabel(f"{variable.capitalize()} [{unit}]")
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper right")
-    fig.tight_layout()
-    plt.close(fig)
+    # Interactive Plotly figure: data with anomalies in a contrasting colour;
+    # hovering over an anomaly also shows its LOF score
+    unit = UNITS.get(variable, "")
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(x=series.index, y=series, mode="lines", name=f"Hourly {variable}",
+                               line=dict(color="#60a5fa", width=1)))
+    fig.add_trace(go.Scattergl(x=anomalies.index, y=anomalies[variable], mode="markers",
+                               name=f"Anomalies ({int(is_anomaly.sum())})",
+                               marker=dict(color="#dc2626", size=7),
+                               customdata=anomalies["lof_score"],
+                               hovertemplate="%{x}<br>%{y:.2f}<br>LOF score %{customdata}"))
+    fig.update_layout(
+        title=f"{variable.capitalize()} with LOF anomalies {region_label} "
+              f"(contamination {contamination:.1%}, {n_neighbors} neighbours)",
+        xaxis_title="Time", yaxis_title=f"{variable.capitalize()} [{unit}]",
+        legend=dict(orientation="h", y=1.02, x=1, xanchor="right", yanchor="bottom"),
+    )
 
     summary = {
         "variable": variable,
@@ -352,20 +366,23 @@ def stl_decomposition(reservoirs, area_type="EL", area_number=3,
 
     parts = [("Observed", result.observed), ("Trend", result.trend),
              ("Seasonal", result.seasonal), ("Residual", result.resid)]
-    fig, axes = plt.subplots(4, 1, figsize=(13, 9), sharex=True)
-    for ax, (name, values) in zip(axes, parts):
+    # Four panels on top of each other with a shared time axis (zooming one zooms all)
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.04,
+                        subplot_titles=[name for name, _ in parts])
+    for row, (name, values) in enumerate(parts, start=1):
         if name == "Residual":
-            ax.scatter(values.index, values, s=3, color="steelblue")
-            ax.axhline(0, color="black", linewidth=0.8)
+            fig.add_trace(go.Scatter(x=values.index, y=values, mode="markers", name=name,
+                                     marker=dict(color="#1d4ed8", size=3)), row=row, col=1)
+            fig.add_hline(y=0, line_color="black", line_width=1, row=row, col=1)
         else:
-            ax.plot(values.index, values, color="steelblue", linewidth=1)
-        ax.set_ylabel(name)
-        ax.grid(alpha=0.3)
-    axes[-1].set_xlabel("Time")
-    fig.suptitle(f"STL decomposition of the filling rate – {area_type} {area_number} "
-                 f"(seasonal={seasonal}, trend={trend}, robust={robust})", fontsize=13)
-    fig.tight_layout()
-    plt.close(fig)
+            fig.add_trace(go.Scatter(x=values.index, y=values, mode="lines", name=name,
+                                     line=dict(color="#1d4ed8", width=1.5)), row=row, col=1)
+    fig.update_layout(
+        height=850, showlegend=False,
+        title=f"STL decomposition of the filling rate – {area_type} {area_number} "
+              f"(seasonal={seasonal}, trend={trend}, robust={robust})",
+    )
+    fig.update_xaxes(title_text="Time", row=4, col=1)
     return fig
 
 
@@ -395,14 +412,65 @@ def reservoir_spectrogram(reservoirs, area_type="EL", area_number=3,
     dates = series.index[0] + pd.to_timedelta(times * 365.25, unit="D")
     keep = freqs <= max_frequency
 
-    fig, ax = plt.subplots(figsize=(13, 5))
-    mesh = ax.pcolormesh(dates, freqs[keep], 10 * np.log10(power[keep] + 1e-12),
-                         shading="nearest", cmap="viridis")
-    fig.colorbar(mesh, ax=ax, label="Power [dB]")
-    ax.set_title(f"Spectrogram of the filling rate – {area_type} {area_number} "
-                 f"(window {window_length} weeks, overlap {window_overlap} weeks)")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Frequency [cycles per year]")
-    fig.tight_layout()
-    plt.close(fig)
+    # Interactive heatmap: hovering shows time, frequency and power of each cell
+    fig = go.Figure(go.Heatmap(
+        x=dates, y=freqs[keep], z=10 * np.log10(power[keep] + 1e-12),
+        colorscale="Viridis", colorbar=dict(title="Power [dB]"),
+        hovertemplate="Time %{x|%b %Y}<br>Frequency %{y:.2f} cycles/year"
+                      "<br>Power %{z:.1f} dB<extra></extra>",
+    ))
+    fig.update_layout(
+        title=f"Spectrogram of the filling rate – {area_type} {area_number} "
+              f"(window {window_length} weeks, overlap {window_overlap} weeks)",
+        xaxis_title="Time", yaxis_title="Frequency [cycles per year]", height=500,
+    )
     return fig
+
+
+# ---------------------------------------------------------------------------
+# Exchange rates from Norges Bank (part 4)
+# ---------------------------------------------------------------------------
+
+NB_URL = "https://data.norges-bank.no/api/data/EXR/{frequency}.{currencies}.NOK.SP"
+
+
+def download_exchange_rates(start_date, end_date, currencies=("EUR", "USD"), frequency="B"):
+    """Download exchange rates against NOK from the Norges Bank API (same as project_4.ipynb).
+
+    start_date, end_date : period to download, as "YYYY-MM-DD" strings
+    currencies           : base currencies, e.g. ("EUR", "USD")
+    frequency            : "B" = business days, "M" = monthly, "A" = annual
+    Returns a DataFrame with one row per date and one column per currency,
+    containing the price of 1 unit of the currency in NOK.
+    """
+    import io
+
+    # Series key, e.g. "B.EUR+USD.NOK.SP" ("+" selects several currencies at once)
+    url = NB_URL.format(frequency=frequency, currencies="+".join(currencies))
+    params = {"format": "csv", "startPeriod": start_date, "endPeriod": end_date, "locale": "en"}
+    response = requests.get(url, params=params, timeout=60)
+    response.raise_for_status()
+
+    # sep=None lets pandas detect the separator (Norges Bank uses ";")
+    raw = pd.read_csv(io.StringIO(response.text), sep=None, engine="python")
+    values = pd.to_numeric(raw["OBS_VALUE"].astype(str).str.replace(",", "."), errors="coerce")
+    values = values / 10 ** raw["UNIT_MULT"].astype(int)   # always the price of 1 unit
+
+    rates = (pd.DataFrame({"date": pd.to_datetime(raw["TIME_PERIOD"]),
+                           "currency": raw["BASE_CUR"], "nok": values.values})
+             .pivot(index="date", columns="currency", values="nok").sort_index())
+    rates.columns.name = None
+    return rates
+
+
+def to_weekly(series, how="mean"):
+    """Aggregate a daily or hourly series (or DataFrame) to weeks (same as project_4.ipynb).
+
+    Weeks run Monday-Sunday and are labelled with the Monday, like the NVE reservoir data.
+    how : "mean" (e.g. temperature, exchange rates) or "sum" (e.g. precipitation, energy)
+    """
+    s = series.copy()
+    if s.index.tz is not None:   # time-zone aware -> Norwegian local time, then naive
+        s.index = s.index.tz_convert("Europe/Oslo").tz_localize(None)
+    weekly = s.resample("W-MON", closed="left", label="left")
+    return weekly.sum() if how == "sum" else weekly.mean()
