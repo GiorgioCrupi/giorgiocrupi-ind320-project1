@@ -13,6 +13,7 @@ Contents
 - Weather (Open-Meteo)  : make_openmeteo_client, download_weather
 - Outliers / anomalies  : spc_outliers (DCT + SPC), lof_anomalies (Local Outlier Factor)
 - Exchange rates (NB)   : download_exchange_rates, to_weekly
+- Forecasting (River)   : future_exogenous, forecast_filling (SNARIMAX), BEST_SETTINGS
 - Reservoir statistics  : load_reservoirs, reservoir_series,
                           stl_decomposition, reservoir_spectrogram
 """
@@ -474,3 +475,97 @@ def to_weekly(series, how="mean"):
         s.index = s.index.tz_convert("Europe/Oslo").tz_localize(None)
     weekly = s.resample("W-MON", closed="left", label="left")
     return weekly.sum() if how == "sum" else weekly.mean()
+
+
+# ---------------------------------------------------------------------------
+# Forecasting of the reservoir filling with River SNARIMAX (part 4)
+# ---------------------------------------------------------------------------
+
+WEATHER_COLUMNS = ["temperature_2m", "precipitation", "snowfall"]
+CURRENCY_COLUMNS = ["eur_nok", "usd_nok"]
+
+# Best setting from the tests in project_4.ipynb (section 3.4): default in the app
+BEST_SETTINGS = dict(history_weeks=312, exogenous=(), p=1, d=0, q=0, m=52,
+                     sp=0, sd=1, sq=0, learning_rate=0.03)
+
+
+def future_exogenous(history, exogenous, future_weeks):
+    """Assumed values of the exogenous variables in the forecast weeks (same as the notebook).
+
+    Weather  -> climatology: mean of the same ISO week of the year in the training history.
+    Currency -> last known value (a simple "no change" assumption).
+    Returns one dictionary per future week, the format River expects.
+    """
+    week_of_year = history.index.isocalendar().week
+    rows = []
+    for week in future_weeks:
+        row = {}
+        for col in exogenous:
+            if col in WEATHER_COLUMNS:
+                value = history.loc[week_of_year == week.isocalendar().week, col].mean()
+                if pd.isna(value):              # e.g. ISO week 53, which is rare
+                    value = history[col].mean()
+            else:
+                value = history[col].iloc[-1]
+            row[col] = float(value)
+        rows.append(row)
+    return rows
+
+
+def forecast_filling(data, history_weeks=312, horizon=13, exogenous=(),
+                     p=1, d=0, q=0, m=52, sp=0, sd=1, sq=0,
+                     learning_rate=0.03, end=None, quantile=None):
+    """Forecast the weekly filling rate (%) of one region with River's SNARIMAX.
+
+    Same function as in project_4.ipynb (section 3.2), with the best tested setting as default
+    and an optional quantile for confidence intervals (bonus exercise).
+
+    data          : weekly DataFrame with the column "fill_rate" (+ exogenous columns)
+    history_weeks : number of weeks used for training (length of history)
+    horizon       : number of weeks to forecast
+    exogenous     : list of exogenous columns to use (empty = filling rate only)
+    p, d, q       : non-seasonal AR order, differencing, MA order
+    m, sp, sd, sq : season length, seasonal AR order, seasonal differencing, seasonal MA order
+    learning_rate : step size of the SGD optimiser
+    end           : last week used for training (default: the last week in the data)
+    quantile      : None = ordinary forecast (squared loss); e.g. 0.05 or 0.95 = forecast of
+                    that quantile with the quantile (pinball) loss, used for confidence bands
+    Returns a DataFrame indexed by week with the forecast and, if known, the actual value.
+    """
+    from river import linear_model, optim, preprocessing, time_series
+
+    exogenous = list(exogenous)
+    end = data.index[-1] if end is None else pd.Timestamp(end)
+
+    # 1. Training history: the last `history_weeks` weeks up to `end`
+    history = data.loc[:end].iloc[-history_weeks:]
+    if len(history) < 2 * m:
+        raise ValueError(f"At least {2 * m} weeks of history are needed (got {len(history)}).")
+
+    # 2. Model: SNARIMAX builds the lagged values (and differences) and passes them, together
+    #    with the exogenous variables, to a linear regression trained with SGD.
+    #    The quantile loss makes the regression predict a quantile instead of the mean.
+    loss = optim.losses.Quantile(alpha=quantile) if quantile else optim.losses.Squared()
+    regressor = preprocessing.StandardScaler() | linear_model.LinearRegression(
+        optimizer=optim.SGD(learning_rate),
+        loss=loss,
+        intercept_init=0.0 if (d or sd) else float(history["fill_rate"].mean()),
+        intercept_lr=0.1,
+    )
+    model = time_series.SNARIMAX(p=p, d=d, q=q, m=m, sp=sp, sd=sd, sq=sq, regressor=regressor)
+
+    # 3. Online training: one week at a time, as if the data arrived as a stream
+    for _, row in history.iterrows():
+        x = {col: float(row[col]) for col in exogenous}
+        model.learn_one(y=float(row["fill_rate"]), x=x)
+
+    # 4. Dynamic forecast for the next `horizon` weeks (Mondays after `end`)
+    future_weeks = pd.date_range(end + pd.Timedelta(weeks=1), periods=horizon, freq="W-MON")
+    xs = future_exogenous(history, exogenous, future_weeks)
+    predictions = model.forecast(horizon=horizon, xs=xs)
+
+    # 5. Forecast clipped to the physical range, plus the actual values when known
+    result = pd.DataFrame({"forecast": predictions}, index=future_weeks).clip(0, 100)
+    result["actual"] = data["fill_rate"].reindex(future_weeks)
+    result.index.name = "week"
+    return result

@@ -1,0 +1,9 @@
+# App-wide theme: Streamlit applies these colours to all widgets, and st.plotly_chart
+# uses them automatically for the Plotly charts (theme="streamlit" is the default)
+[theme]
+base = "light"
+primaryColor = "#1d4ed8"               # blue: buttons, sliders, selected items
+backgroundColor = "#ffffff"            # page background
+secondaryBackgroundColor = "#eef4fb"   # sidebar and input fields (light blue-grey)
+textColor = "#1f2937"                  # dark grey text
+font = "sans serif"
